@@ -1,0 +1,43 @@
+MPLINK 5.09, LINKER
+Linker Map File - Created Thu Jan  2 19:07:01 2020
+
+                                 Section Info
+                  Section       Type    Address   Location Size(Bytes)
+                ---------  ---------  ---------  ---------  ---------
+             reset_vector       code   0x000000    program   0x000002
+                   .cinit    romdata   0x000001    program   0x000004
+              application       code   0x000003    program   0x00002e
+.config_2007_BUILD/DEFAULT/PRODUCTION/MAIN.O       code   0x002007    program   0x000002
+
+
+
+                              Program Memory Usage 
+                               Start         End      
+                           ---------   ---------      
+                            0x000000    0x000019      
+                            0x002007    0x002007      
+            27 out of 8454 program addresses used, program memory utilization is 0%
+
+
+
+                              Symbols - Sorted by Name
+                     Name    Address   Location    Storage File                     
+                ---------  ---------  ---------  --------- ---------                
+                    delay   0x000010    program     static /home/otoja/PROJECTS/picnawode/asm-simple-led-1.X/main.asm
+                  delay_1   0x000012    program     static /home/otoja/PROJECTS/picnawode/asm-simple-led-1.X/main.asm
+                  delay_2   0x000014    program     static /home/otoja/PROJECTS/picnawode/asm-simple-led-1.X/main.asm
+                     main   0x000003    program     static /home/otoja/PROJECTS/picnawode/asm-simple-led-1.X/main.asm
+                 mainLoop   0x000009    program     static /home/otoja/PROJECTS/picnawode/asm-simple-led-1.X/main.asm
+
+
+
+                              Symbols - Sorted by Address
+                     Name    Address   Location    Storage File                     
+                ---------  ---------  ---------  --------- ---------                
+                     main   0x000003    program     static /home/otoja/PROJECTS/picnawode/asm-simple-led-1.X/main.asm
+                 mainLoop   0x000009    program     static /home/otoja/PROJECTS/picnawode/asm-simple-led-1.X/main.asm
+                    delay   0x000010    program     static /home/otoja/PROJECTS/picnawode/asm-simple-led-1.X/main.asm
+                  delay_1   0x000012    program     static /home/otoja/PROJECTS/picnawode/asm-simple-led-1.X/main.asm
+                  delay_2   0x000014    program     static /home/otoja/PROJECTS/picnawode/asm-simple-led-1.X/main.asm
+
+
