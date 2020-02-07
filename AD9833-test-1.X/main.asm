@@ -1,0 +1,1331 @@
+;*************************************************************************
+; DDS_F_Gen.asm
+;
+; Processor: PIC 16F628 Clocked at : 25MHz (EXT Osc) DDS CLOCK
+;
+; (Re)Coded: 26/03/05 Author :MRB
+; Revision tracking: Ver. 1.01 :(1st issue, 1 changes/fixes)
+;
+;*************************************************************************
+; FUNCTIONAL OVERVIEW
+;
+; A DIRECT DIGITAL SYNTHESIS SINE/TRIANGLE/SQUARE FUNCTION GENERATOR
+; 0.0Hz TO 10MHz TO 0.1Hz RESOLUTION
+; 0.0 TO 10.0 Vpp OUTPUT RANGE TO 0.1V RESOLUTION
+; PUSH BUTTON CONTROL, WITH 2 X 16 LCD
+;
+; THE WAVEFORM IS SYNTHESISED USING AN ANALOG DEVICES AD9833 SPI DDS IC
+; THE OUTPUT LEVEL IS CONTROLLED BY AN DS1267 SPI E-POT
+;
+;*************************************************************************
+
+; Port A I/O allocation
+
+; PIN DIR USE
+
+; RA0 O/P DDS FUNCTION GENERATOR IC SPI BUS FSYNC (PULLED UP)
+; RA1 O/P ELECTRONIC POTENTIOMETER IC SPI BUS FSYNC (PULLED DOWN)
+; RA2 O/P LCD R/S
+; RA3 O/P LCD EN*
+; RA4 I/P NOT USED
+
+
+; Port B I/O allocation
+
+; PIN DIR USE
+
+; RB0 O/P LCD D4 / ALSO SPI BUS CLOCK
+; RB1 O/P LCD D5 / ALSO SPI BUS DATA
+; RB2 O/P LCD D6
+; RB3 O/P LCD D7
+; RB4 I/P SWITCH 1,UP (ACTIVE LOW,PULLED UP)
+; RB5 I/P SWITCH 2,DOWN (ACTIVE LOW,PULLED UP)
+; RB6 I/P SWITCH 3,LEFT (ACTIVE LOW,PULLED UP)
+; RB7 I/P SWITCH 4,RIGHT (ACTIVE LOW,PULLED UP)
+
+;*************************************************************************
+
+;DEFINE ALIAS COMMANDS
+
+#DEFINE PAGE0 BCF $03,5
+#DEFINE PAGE1 BSF $03,5
+
+.AVSYM
+
+;*************************************************************************
+;INDENTATION SETTINGS
+;LABEL MNEMONIC REMARK
+;*************************************************************************
+
+;DEFINE REGISTER LABELS
+
+INDF: .EQU $00 ;BANK.. 0 & 1
+TMR0: .EQU $01 ;0
+OPTION: .EQU $01 ;1
+PCL: .EQU $02 ;0 & 1
+
+STATUS: .EQU $03 ;0 & 1
+FSR: .EQU $04 ;0 & 1
+PORTA: .EQU $05 ;0
+TRISA: .EQU $05 ;1
+
+PORTB: .EQU $06 ;0
+TRISB: .EQU $06 ;1
+PCLATH: .EQU $0A ;0 & 1
+INTCON: .EQU $0B ;0 & 1
+
+PIR1: .EQU $0C ;0
+PIE1: .EQU $0C ;1
+TMR1L .EQU $0E ;0
+PCON: .EQU $0E ;1
+
+TMR1H .EQU $0F ;0
+TICON: .EQU $10 ;0
+TMR2: .EQU $11 ;0
+T2CON: .EQU $12 ;0
+PR2: .EQU $12 ;1
+
+CCPR1L: .EQU $15 ;0
+CCPR1H: .EQU $16 ;0
+CCP1CON: .EQU $17 ;0
+EEDATA: .EQU $1A ;1
+
+EEADR: .EQU $1B ;1
+EECON: .EQU $1C ;1
+CMCON: .EQU $1F ;0
+VRCON: .EQU $1F ;1
+
+
+
+
+;*************************************************************************
+
+;DEFINE SYSTEM RAM USED (VARIABLES.. ETC)
+
+LCDBYT: .EQU $20 ;LCD BYTE TO SEND
+INDEX: .EQU $21 ;MESSAGE POINTER FOR LCD ROUTINES
+
+GP1: .EQU $22 ;GENERAL PURPOSE (ROUTINE LOCAL) REG. 1
+GP2: .EQU $23 ;GENERAL PURPOSE (ROUTINE LOCAL) REG. 2
+GP3: .EQU $24 ;GENERAL PURPOSE (ROUTINE LOCAL) REG. 3
+
+FD1: .EQU $25 ;FREQUENCY, DECIMAL REGISTER 1 (MS DECADE)
+FD2: .EQU $26 ;FREQUENCY, DECIMAL REGISTER 2
+FD3: .EQU $27 ;FREQUENCY, DECIMAL REGISTER 3
+FD4: .EQU $28 ;FREQUENCY, DECIMAL REGISTER 4
+FD5: .EQU $29 ;FREQUENCY, DECIMAL REGISTER 5
+FD6: .EQU $2A ;FREQUENCY, DECIMAL REGISTER 6
+FD7: .EQU $2B ;FREQUENCY, DECIMAL REGISTER 7
+FD8: .EQU $2C ;FREQUENCY, DECIMAL REGISTER 8 (LS DECADE)
+
+FB1: .EQU $2D ;FREQUENCY, BINARY REGISTER 1 (MS BYTE)
+FB2: .EQU $2E ;FREQUENCY, BINARY REGISTER 2
+FB3: .EQU $2F ;FREQUENCY, BINARY REGISTER 3
+FB4: .EQU $30 ;FREQUENCY, BINARY REGISTER 4 (LS BYTE)
+
+ADD1: .EQU $31 ;ADDITION OFFSET REGISTER 1 (MS BYTE)
+ADD2: .EQU $32 ;ADDITION OFFSET REGISTER 2
+ADD3: .EQU $33 ;ADDITION OFFSET REGISTER 3
+ADD4: .EQU $34 ;ADDITION OFFSET REGISTER 4 (LS BYTE)
+
+
+TXD_HI: .EQU $35 ;SPI TX DATA UPPER BYTE
+TXD_LO: .EQU $36 ;SPI TX DATA LOWER BYTE
+
+WIPER: .EQU $37 ;OUTPUT LEVEL POT WIPER SETTING
+
+SHAPE: .EQU $38 ;WAVESHAPE
+
+C_POS: .EQU $39 ;CURRENT CURSOR POSITION
+
+;*************************************************************************
+
+;DEFINE PIC FLAGS
+
+W: .EQU 0 ;RESULT TO BE PASSED TO WORKING REGISTER
+F: .EQU 1 ;RESULT TO BE PASSED TO CURRENT FILE REG.
+
+C: .EQU 0 ;CARRY FLAG (LOCATED IN STATUS REGISTER)
+DC: .EQU 1 ;DIGIT CARRY FLAG (LOCATED IS STATUS REG.)
+
+Z: .EQU 2 ;ZERO FLAG (LOCATED IN STATUS REGISTER)
+
+PD: .EQU 3 ;POWER DOWN FLAG (LOCATED IN STATUS REG.)
+TO: .EQU 4 ;TIME OUT FLAG (LOCATED IN STATUS REGISTER)
+
+;*************************************************************************
+
+;DEFINE PORT BIT EQUATES
+
+;PORTA
+
+DDS_CS: .EQU $00 ;DDS IC *CHIP SELECT
+POT_CS: .EQU $01 ;EEPOT IC *CHIP SELECT
+LCDRS: .EQU $02 ;LCD DISPLAY REGISTER SELECT
+LCDEN: .EQU $03 ;LCD DISPLAY ENABLE
+
+;PORTB
+
+SPI_CK: .EQU $00
+SPI_DT: .EQU $01
+UP: .EQU $04 ;PUSH BUTTON SWITCH "UP"
+DOWN: .EQU $05 ;PUSH BUTTON SWITCH "DOWN"
+LEFT: .EQU $06 ;PUSH BUTTON SWITCH "LEFT"
+RIGHT: .EQU $07 ;PUSH BUTTON SWITCH "RIGHT"
+
+;*************************************************************************
+;*************************************************************************
+;* *
+;* THIS IS THE START OF THE ACTUAL CODE *
+;* *
+;*************************************************************************
+;*************************************************************************
+
+.ORG 0000
+
+GOTO 0005 ;JUMP PAST ISR VECTOR
+NOP
+NOP
+NOP
+GOTO INTRPT ;INTERUPT SERVICE ROUTINE JUMP VECTOR
+
+;*************************************************************************
+
+GOTO SETUP ;START OF PROGRAM MEMORY
+
+;*************************************************************************
+
+;THE DATA TABLES HAVE BEEN PUT NEAR THE BEGINING OF THE PROGRAM
+;TO ENSURE THAT THEY DONT CROSS ROM PAGE BOUNDARIES
+
+TABLE: ADDWF PCL,F
+
+;=========================================================================
+;PRINT DATA TABLES
+
+;GUI SCREEN TOP LINE
+
+RETLW $30 ; "0"
+RETLW $27 ; "'"
+RETLW $30 ; "0"
+RETLW $30 ; "0"
+RETLW $31 ; "1"
+RETLW $27 ; "'"
+RETLW $30 ; "0"
+RETLW $30 ; "0"
+RETLW $30 ; "0"
+RETLW $27 ; "."
+RETLW $30 ; "0"
+RETLW $20 ; " "
+RETLW $20 ; " "
+RETLW $48 ; "H"
+RETLW $7A ; "z"
+RETLW $20 ; " "
+RETLW $00 ; EOF
+
+;GUI SCREEN BOTTOM LINE
+
+RETLW $2A ; "*"
+RETLW $20 ; " "
+RETLW $49 ; "I"
+RETLW $6E ; "n"
+RETLW $69 ; "i"
+RETLW $74 ; "t"
+RETLW $20 ; " "
+RETLW $2A ; "*"
+RETLW $20 ; " "
+RETLW $30 ; "0"
+RETLW $31 ; "1"
+RETLW $2E ; "."
+RETLW $30 ; "0"
+RETLW $56 ; "V"
+RETLW $70 ; "p"
+RETLW $70 ; "p"
+RETLW $00 ; EOF
+
+;WAVEFORM DESCRIPTION, SINE
+
+RETLW $53 ; "S"
+RETLW $69 ; "i"
+RETLW $6E ; "n"
+RETLW $65 ; "e"
+RETLW $20 ; " "
+RETLW $20 ; " "
+RETLW $20 ; " "
+RETLW $20 ; " "
+RETLW $00 ; EOF
+
+;WAVEFORM DESCRIPTION, SQUARE
+
+RETLW $53 ; "S"
+RETLW $71 ; "q"
+RETLW $75 ; "u"
+RETLW $61 ; "a"
+RETLW $72 ; "r"
+RETLW $65 ; "e"
+RETLW $20 ; " "
+RETLW $20 ; " "
+RETLW $00 ; EOF
+
+;WAVEFORM DESCRIPTION, TRIANGLE
+
+RETLW $54 ; "T"
+RETLW $72 ; "r"
+RETLW $69 ; "i"
+RETLW $61 ; "a"
+RETLW $6E ; "n"
+RETLW $67 ; "g"
+RETLW $6C ; "l"
+RETLW $65 ; "e"
+RETLW $00 ; EOF
+
+;*************************************************************************
+;*************************************************************************
+
+SETUP: PAGE0 ;BANK SELECT
+
+; AT THE MOMENT CS LINES ARE HELD IN PLACE BY PULL UP/DOWN RESISTORS
+; SET THE CS LINES TO CORRECT LEVELS NOW!
+; SO WHEN THE LINES ARE TRIS'ED TO O/P
+; THERE ARE NO NASTY GLITCHES TO UPSET THE PERIPHERAL ICS.
+
+MOVLW $01 ;SET W TO $01
+MOVWF PORTA ;SEND TO PORT A
+
+;=========================================================================
+;DISABLE THE COMPARATOR FUNCTIONALITY OF THE PIC
+;I NEED THE PINS FOR DIGITAL I/O!!
+
+MOVLW $07 ;SET W TO $07, DISABLE COMP. PINS DIGITAL IO
+MOVWF CMCON ;SEND TO COMPARATOR CONTROL REGISTER
+
+;=========================================================================
+; ... NOW SET UP IO PORT DIRECTIONS
+
+
+PAGE1
+
+MOVLW $10 ;SET W TO $10
+MOVWF TRISA ;CONFIG PORT A
+
+MOVLW $F0 ;SET W TO $FO
+MOVWF TRISB ;CONFIG PORT B
+
+
+PAGE0
+
+;*************************************************************************
+; THE FOLLOWING ROUTINES INITIALISE THE LCD DISPLAY
+
+BSF PORTA,LCDEN ;ENSURE LCD ENABLE IS HIGH
+
+BCF PORTA,LCDRS ;SET THE REGISTER TO WRITE TO AS COMMAND
+
+CALL LNGDLY
+CALL LNGDLY
+
+;=========================================================================
+; INITIALISE FOR 4 BIT MODE
+
+MOVLW $02 ;SET DATA FOR 4 BIT DISPLAY MODE
+MOVWF PORTB
+
+BCF PORTA,LCDEN ;PULSE LCD ENABLE LINE LOW
+BSF PORTA,LCDEN ;THEN RETURN HIGH
+
+CALL LNGDLY
+CALL LNGDLY
+
+;=========================================================================
+; SETUP DISPLAY ENTRY AND CURSOR PARAMETERS
+
+MOVLW $0C ;SET UP CURSOR, NO UNDERLINE OR BLINK
+MOVWF LCDBYT
+
+CALL LCDCOM
+
+
+
+MOVLW $18 ;SET DATA FOR ENTRY MODE
+MOVWF LCDBYT
+
+CALL LCDCOM
+
+;========================================================================
+
+;*************************************************************************
+;PRINT THE GUI SCREEN (WITH "* Init *" WHERE THE WAVESHAPE IS DISPLAYED)
+
+CALL CLS ;CLEAR THE DISPLAY
+
+MOVLW $00 ;PRINT THE TOP LINE OF THE SCREEN
+MOVWF INDEX
+CALL PRINT
+
+MOVLW $C0 ;MOVE CURSOR TO SECOND LINE
+MOVWF LCDBYT
+CALL LCDCOM
+
+INCF INDEX,F ;PRINT SECOND LINE OF SCREEN
+CALL PRINT
+
+;*************************************************************************
+;INITIALISE THE DECIMAL FREQUENCY REGISTERS (0'001'000.0Hz)
+
+CLRF FD1
+CLRF FD2
+CLRF FD3
+
+MOVLW $01
+MOVWF FD4
+
+CLRF FD5
+CLRF FD6
+CLRF FD7
+CLRF FD8
+
+;*************************************************************************
+;INITIALISE THE FREQUENCY GENERATOR SINE O/P & UNDER INTERNAL RESET
+
+MOVLW $21
+MOVWF TXD_HI
+
+MOVLW $00
+MOVWF TXD_LO
+
+CALL TX_WORD
+
+;*************************************************************************
+;INITIALISE THE BINARY FREQUENCY REGISTERS
+;BASED ON THE DECIMAL REGISTERS BEING PRE LOADED
+
+CALL FDTOB
+
+;*************************************************************************
+;SEND THE DEFAULT FREQUENCY LONGWORD
+;(THE BINARY FREQUENCY REGS ARE ALREADY PRE-LOADED)
+
+CALL OPFREQ
+
+;*************************************************************************
+;RELEASE THE FREQUENCY GENERATOR FROM INTERNAL RESET
+
+MOVLW $20
+MOVWF TXD_HI
+
+MOVLW $00
+MOVWF TXD_LO
+
+CALL TX_WORD
+
+;*************************************************************************
+;INITIALISE THE OUTPUT LEVEL VALUE
+
+MOVLW $C8 ;200 DECIMAL/20=10.0Vpp
+MOVWF WIPER
+
+;*************************************************************************
+;INITIALISE THE E-POT
+
+CALL TX_WIP
+
+;*************************************************************************
+;INITIALISE THE OUTPUT WAVESHAPE VALUE, FLAG REG TO SINE
+
+MOVLW $00
+MOVWF SHAPE
+
+;*************************************************************************
+;THE SIGNAL GENERATOR WILL BY NOW BE OUTPUTING A TONE.
+;CLEAR THE INITIALISATION MESSAGE
+
+MOVLW $C0 ;SEND CURSOR TO BEGINING OF 2ND LINE
+MOVWF LCDBYT
+CALL LCDCOM
+
+
+
+MOVLW $22 ;MAKE PRINT POINTER POINT TO "SINE "
+MOVWF INDEX
+
+CALL PRINT
+
+BRKPNT: GOTO BRKPNT ;SOFTWARE TEST BREAKPOINT
+
+;*************************************************************************
+;*************************************************************************
+;MENU LEVEL 1, ADJUST MILLIONS
+
+MENU1: MOVLW $C0 ;SET CURRENT CURSOR POSITION
+MOVWF C_POS
+
+MOVLW FD1 ;SET INDIRECT POINTER FOR VARIABLE TO BE EDITED
+MOVWF FSR
+
+M1_LP: CALL ADJVAL
+
+BTFSS PORTB,LEFT ;IF LEFT KEY PRESSED GOTO PREVIOUS MENU LEVEL
+GOTO MENU8
+
+BTFSS PORTB,RIGHT ;IF RIGHT KEY PRESSED GOTO NEXT MENU LEVEL
+GOTO MENU2
+
+GOTO M1_LP
+
+;*************************************************************************
+;MENU LEVEL 2, ADJUST HUNDRED THOUSANDS
+
+MENU2: MOVLW $C0 ;SET CURRENT CURSOR POSITION
+MOVWF C_POS
+
+MOVLW FD2 ;SET INDIRECT POINTER FOR VARIABLE TO BE EDITED
+MOVWF FSR
+
+M2_LP: CALL ADJVAL
+
+BTFSS PORTB,LEFT ;IF LEFT KEY PRESSED GOTO PREVIOUS MENU LEVEL
+GOTO MENU1
+
+BTFSS PORTB,RIGHT ;IF RIGHT KEY PRESSED GOTO NEXT MENU LEVEL
+GOTO MENU3
+
+GOTO M2_LP
+
+;*************************************************************************
+;MENU LEVEL 3, ADJUST TEN THOUSANDS
+
+MENU3: MOVLW $C0 ;SET CURRENT CURSOR POSITION
+MOVWF C_POS
+
+MOVLW FD3 ;SET INDIRECT POINTER FOR VARIABLE TO BE EDITED
+MOVWF FSR
+
+M3_LP: CALL ADJVAL
+
+BTFSS PORTB,LEFT ;IF LEFT KEY PRESSED GOTO PREVIOUS MENU LEVEL
+GOTO MENU2
+
+BTFSS PORTB,RIGHT ;IF RIGHT KEY PRESSED GOTO NEXT MENU LEVEL
+GOTO MENU4
+
+GOTO M3_LP
+
+;*************************************************************************
+;MENU LEVEL 4, ADJUST THOUSANDS
+
+MENU4: MOVLW $C0 ;SET CURRENT CURSOR POSITION
+MOVWF C_POS
+
+MOVLW FD4 ;SET INDIRECT POINTER FOR VARIABLE TO BE EDITED
+MOVWF FSR
+
+M4_LP: CALL ADJVAL
+
+BTFSS PORTB,LEFT ;IF LEFT KEY PRESSED GOTO PREVIOUS MENU LEVEL
+GOTO MENU3
+
+BTFSS PORTB,RIGHT ;IF RIGHT KEY PRESSED GOTO NEXT MENU LEVEL
+GOTO MENU5
+
+GOTO M4_LP
+
+;*************************************************************************
+;MENU LEVEL 5, ADJUST HUNDREDS
+
+MENU5: MOVLW $C0 ;SET CURRENT CURSOR POSITION
+MOVWF C_POS
+
+MOVLW FD5 ;SET INDIRECT POINTER FOR VARIABLE TO BE EDITED
+MOVWF FSR
+
+M5_LP: CALL ADJVAL
+
+BTFSS PORTB,LEFT ;IF LEFT KEY PRESSED GOTO PREVIOUS MENU LEVEL
+GOTO MENU4
+
+BTFSS PORTB,RIGHT ;IF RIGHT KEY PRESSED GOTO NEXT MENU LEVEL
+GOTO MENU6
+
+GOTO M5_LP
+
+
+;*************************************************************************
+;MENU LEVEL 6, ADJUST TENS
+
+MENU6: MOVLW $C0 ;SET CURRENT CURSOR POSITION
+MOVWF C_POS
+
+MOVLW FD6 ;SET INDIRECT POINTER FOR VARIABLE TO BE EDITED
+MOVWF FSR
+
+M6_LP: CALL ADJVAL
+
+BTFSS PORTB,LEFT ;IF LEFT KEY PRESSED GOTO PREVIOUS MENU LEVEL
+GOTO MENU5
+
+BTFSS PORTB,RIGHT ;IF RIGHT KEY PRESSED GOTO NEXT MENU LEVEL
+GOTO MENU7
+
+GOTO M6_LP
+
+;*************************************************************************
+;MENU LEVEL 7, ADJUST UNITS
+
+MENU7: MOVLW $C0 ;SET CURRENT CURSOR POSITION
+MOVWF C_POS
+
+MOVLW FD7 ;SET INDIRECT POINTER FOR VARIABLE TO BE EDITED
+MOVWF FSR
+
+M7_LP: CALL ADJVAL
+
+BTFSS PORTB,LEFT ;IF LEFT KEY PRESSED GOTO PREVIOUS MENU LEVEL
+GOTO MENU6
+
+BTFSS PORTB,RIGHT ;IF RIGHT KEY PRESSED GOTO NEXT MENU LEVEL
+GOTO MENU8
+
+GOTO M7_LP
+
+;*************************************************************************
+;MENU LEVEL 8, ADJUST TENTHS
+
+MENU8: MOVLW $C0 ;SET CURRENT CURSOR POSITION
+MOVWF C_POS
+
+MOVLW FD8 ;SET INDIRECT POINTER FOR VARIABLE TO BE EDITED
+MOVWF FSR
+
+
+M8_LP: CALL ADJVAL
+
+BTFSS PORTB,LEFT ;IF LEFT KEY PRESSED GOTO PREVIOUS MENU LEVEL
+GOTO MENU7
+
+BTFSS PORTB,RIGHT ;IF RIGHT KEY PRESSED GOTO NEXT MENU LEVEL
+GOTO MENU9
+
+GOTO M8_LP
+
+;*************************************************************************
+;*************************************************************************
+;*************************************************************************
+
+; SSS U U BBBB RRRR OOO U U TTTTT IIIII N N EEEEE SSS
+; S U U B B R R O O U U T I NN N E S
+; SSS U U BBBB RRRR O O U U T I N N N EEEE SSS
+; S U U B B R R O O U U T I N NN E S
+; SSS UUU BBBB R R OOO UUU T IIIII N N EEEEE SSS
+
+;=========================================================================
+
+;SUBROUTINE SET LCD MODE AS COMMAND
+
+LCDCOM: BCF PORTA,LCDRS ;SET THE REGISTER TO WRITE TO AS COMMAND
+
+CALL LCDSND
+
+CALL LNGDLY
+
+RETURN
+
+;*************************************************************************
+;SUBROUTINE SET LCD MODE AS DATA
+
+LCDDAT: BSF PORTA,LCDRS ;SET THE REGISTER TO WRITE TO AS DATA
+
+CALL LCDSND
+
+CALL SRTDLY
+
+RETURN
+
+;*************************************************************************
+;SUBROUTINE LCD SEND DATA BYTE
+
+LCDSND: SWAPF LCDBYT,F
+
+MOVF LCDBYT,W ; OUTPUT FIRST NIBBLE
+MOVWF PORTB
+
+BCF PORTA,LCDEN ;PULSE LCD ENABLE LINE LOW
+BSF PORTA,LCDEN ;THEN RETURN HIGH
+
+SWAPF LCDBYT,F
+
+MOVF LCDBYT,W ; OUTPUT SECOND NIBBLE
+MOVWF PORTB
+
+BCF PORTA,LCDEN ;PULSE LCD ENABLE LINE LOW
+BSF PORTA,LCDEN ;THEN RETURN HIGH
+
+RETURN
+
+;*************************************************************************
+;SUBROUTINE VERY LONG DELAY
+
+VLDLY: MOVLW $80 ;LOAD A DELAY CONSTANT
+MOVWF GP3
+
+VLDLP: CALL LNGDLY ;PAUSE
+DECFSZ GP3,F
+GOTO VLDLP
+RETURN
+
+;*************************************************************************
+;SUBROUTINE LONG DELAY (USED FOR LCD COMMAND DATA UPDATE)
+
+LNGDLY: CLRF GP1
+MOVLW $FF ;ABOUT 15mS
+MOVWF GP2
+
+LNGDLP: DECFSZ GP1,F
+GOTO LNGDLP
+DECFSZ GP2,F
+GOTO LNGDLP
+
+RETURN
+
+;*************************************************************************
+;SUBROUTINE SHORT DELAY (USED FOR LCD DISPLAY DATA UPDATE)
+
+SRTDLY: MOVLW $FF ;ABOUT 50uS
+MOVWF GP1
+
+SRTDLP DECFSZ GP1,F
+GOTO SRTDLP
+
+RETURN
+
+;*************************************************************************
+;SUBROUTINE PRINT STRING
+
+
+PRINT: MOVF INDEX,W
+CALL TABLE
+
+ADDLW $00 ;IS CHARACTER $00, END OF MSG
+BTFSC STATUS,Z ;IF SO RETURN
+RETURN
+
+INCF INDEX,F ;ELSE PRINT CHARACTER
+MOVWF LCDBYT
+CALL LCDDAT
+
+GOTO PRINT ;AND CARRY ON LOOPING
+
+
+;*************************************************************************
+;SUBROUTINE CLEAR DISPLAY
+
+CLS: MOVLW $01
+MOVWF LCDBYT
+CALL LCDCOM
+
+CALL LNGDLY
+CALL LNGDLY
+
+RETURN
+
+;*************************************************************************
+;SUBROUTINE CLEAR BOTTOM LINE
+
+
+CLRBTM: MOVLW $C0 ;SEND CURSOR TO BEGINING OF 2ND LINE
+MOVWF LCDBYT
+CALL LCDCOM
+
+MOVLW $10 ;SET COUNTER FOR 16 SPACES
+MOVWF GP1
+
+W_LINE MOVLW $20 ;PRINT THE 16 SPACES, TO WIPE THE LINE
+MOVWF LCDBYT
+CALL LCDDAT
+
+DECFSZ GP1,F ;LOOP COUNTING
+GOTO W_LINE
+
+RETURN
+
+;*************************************************************************
+;*************************************************************************
+;SUBROUTINE FDTOB
+
+;CONVERTS A DECIMAL FREQUENCY VALUE TO A BINARY FREQUENCY VALUE
+;FOR SENDING TO THE FUNCTION GENERATOR IC
+
+;SUB CALLS ADD32 TO PERFORM 32 BIT ADDITION
+
+;=========================================================================
+;INITIALISE THE 32 BIT REGISTER TO ZERO
+
+FDTOB: CLRF FB1
+CLRF FB2
+CLRF FB3
+CLRF FB4
+
+;=========================================================================
+;MILLIONS
+
+INCF FD1,W ;REGISTER TO TEST FIRST FD1
+MOVWF GP1
+
+MOVLW $00 ;OFFSET VALUE 10'000'000(X.1)=1MHz
+MOVWF ADD1
+
+MOVLW $98
+MOVWF ADD2
+
+MOVLW $96
+MOVWF ADD3
+
+MOVLW $80
+MOVWF ADD4
+
+CALL ADD32
+
+;=========================================================================
+;HUNDRED THOUSANDS
+
+INCF FD2,W ;REGISTER TO TEST FD2
+MOVWF GP1
+
+MOVLW $00 ;OFFSET VALUE 1'000'000(X.1)=100KHz
+MOVWF ADD1
+
+MOVLW $0F
+MOVWF ADD2
+
+MOVLW $42
+MOVWF ADD3
+
+MOVLW $40
+MOVWF ADD4
+
+CALL ADD32
+
+;=========================================================================
+;TEN THOUSANDS
+
+INCF FD3,W ;REGISTER TO TEST FD3
+MOVWF GP1
+
+MOVLW $00 ;OFFSET VALUE 1'00'000(X.1)=10KHz
+MOVWF ADD1
+
+MOVLW $01
+MOVWF ADD2
+
+MOVLW $86
+MOVWF ADD3
+
+MOVLW $A0
+MOVWF ADD4
+
+CALL ADD32
+
+;=========================================================================
+;THOUSANDS
+
+INCF FD4,W ;REGISTER TO TEST FD4
+MOVWF GP1
+
+MOVLW $00 ;OFFSET VALUE 10'000(X.1)=1KHz
+MOVWF ADD1
+
+MOVLW $00
+MOVWF ADD2
+
+MOVLW $27
+MOVWF ADD3
+
+MOVLW $10
+MOVWF ADD4
+
+CALL ADD32
+
+;=========================================================================
+;HUNDREDS
+
+INCF FD5,W ;REGISTER TO TEST FD5
+MOVWF GP1
+
+MOVLW $00 ;OFFSET VALUE 1'000(X.1)=100Hz
+MOVWF ADD1
+
+MOVLW $00
+MOVWF ADD2
+
+MOVLW $03
+MOVWF ADD3
+
+MOVLW $E8
+MOVWF ADD4
+
+CALL ADD32
+
+;=========================================================================
+;TENS
+
+INCF FD6,W ;REGISTER TO TEST FD6
+MOVWF GP1
+
+MOVLW $00 ;OFFSET VALUE 100(X.1)=10Hz
+MOVWF ADD1
+
+MOVLW $00
+MOVWF ADD2
+
+MOVLW $00
+MOVWF ADD3
+
+MOVLW $64
+MOVWF ADD4
+
+CALL ADD32
+
+;=========================================================================
+;UNITS
+
+INCF FD7,W ;REGISTER TO TEST FD7
+MOVWF GP1
+
+MOVLW $00 ;OFFSET VALUE 10(X.1)=1Hz
+MOVWF ADD1
+
+MOVLW $00
+MOVWF ADD2
+
+MOVLW $00
+MOVWF ADD3
+
+MOVLW $0A
+MOVWF ADD4
+
+CALL ADD32
+
+;=========================================================================
+;TENTHS
+
+INCF FD8,W ;REGISTER TO TEST FD8
+MOVWF GP1
+
+MOVLW $00 ;OFFSET VALUE 1(X.1)=0.1Hz
+MOVWF ADD1
+
+MOVLW $00
+MOVWF ADD2
+
+MOVLW $00
+MOVWF ADD3
+
+MOVLW $01
+MOVWF ADD4
+
+CALL ADD32
+
+;=========================================================================
+;EXIT ROUTINE
+
+RETURN
+
+;*************************************************************************
+;*************************************************************************
+;SUBROUTINE ADD32
+
+;ADDS THE OFFSET IN ADD1-4 TO FB1-4, GP1 TIMES
+
+ADD32: DECF GP1,F ;DECREMENT GP1
+
+BTFSC STATUS,Z ;RETURN IF ZERO
+RETURN
+
+MOVF ADD4,W ;ADD FB4+ADD4 (LS BYTE)
+ADDWF FB4,F
+
+BTFSC STATUS,C ;IF A BIT HAS CARRIED INCREMENT NEXT BYTE UP
+INCF FB3,F
+
+MOVF ADD3,W ;ADD FB3+ADD3
+ADDWF FB3,F
+
+BTFSC STATUS,C ;IF A BIT HAS CARRIED INCREMENT NEXT BYTE UP
+INCF FB2,F
+
+MOVF ADD2,W ;ADD FB2+ADD2
+ADDWF FB2,F
+
+BTFSC STATUS,C ;IF A BIT HAS CARRIED INCREMENT NEXT BYTE UP
+INCF FB1,F
+
+MOVF ADD4,W ;ADD FB1+ADD1 (MS BYTE)
+ADDWF FB4,F
+
+GOTO ADD32
+
+;*************************************************************************
+;*************************************************************************
+;SUBROUTINE OPFREQ
+
+;CONVERTS A 28 BIT TUNING LONG WORD HELD IN A VIRTUAL 32 BIT REGISTER
+;FB1-FB4 , TO 2 X 16 BIT (2 HEADER+14 DATA) WORDS.
+;WHICH IS TRANSMITTED LOW ORDER WORD, THEN HIGH ORDER WORD TO AD9833 IC
+
+;SUB CALLS ROUTINE TX_WORD TO DO THE SERIAL COMMS.
+
+;=========================================================================
+;LOW ORDER REGISTERS FB3,FB4
+
+;COPY LOW ORDER WORD (FB3,FB4) TO TX BUFFER
+
+OPFREQ: MOVF FB4,W
+MOVWF TXD_LO
+
+MOVF FB3,W
+MOVWF TXD_HI
+
+;REPLACE THE MOST SIGNIFICANT 2 BITS WITH THE HEADER b01
+
+BCF TXD_HI,7
+BSF TXD_HI,6
+
+;TX BUFFER IS BIN. (H H D D D D D D D D D D D D D D), H=HEADER, D=DATA
+; = = 1 1 1 1 0 0 0 0 0 0 0 0 0 0 X=DONT CARE
+; 0 1 3 2 1 0 9 8 7 6 5 4 3 2 1 0
+
+;AND SEND TO THE AD8933 IC
+
+CALL TX_WORD
+
+;=========================================================================
+;=========================================================================
+;HIGH ORDER REGISTERS FB1,FB2...
+
+;TRUNCATE THE REGISTER TO 28 BITS
+;(IN CASE MS 4 BITS HAVE BEEN ACCIDENTLY SET)
+
+MOVF FB1,W
+ANDLW $0F
+MOVWF FB1
+
+;SHIFT THE HIGH ORDER WORD LEFT BY 2 BITS INTO THE TX BUFFER, WITHOUT
+;CORRUPTING THE BINARY FREQUENCY REGISTERS
+
+;FIRST SHIFT
+
+RLF FB1,W ;SHIFT LEFT TOP BYTE INTO TX BUFFER
+MOVWF TXD_HI
+
+RLF FB2,W ;SHIFT LEFT BOTTOM BYTE INTO TX BUFFER
+MOVWF TXD_LO
+
+BTFSC STATUS,C ;IF A BIT CARRIED
+BSF TXD_HI,0 ;SET BIT 0 OF TX BUFFER TOP BYTE
+
+;SECOND SHIFT
+
+RLF TXD_HI,F ;SHIFT LEFT TOP BYTE OF TX BUFFER
+
+RLF TXD_LO,F ;SHIFT LEFT BOTTOM BYTE OF TX BUFFER
+
+BTFSC STATUS,C ;IF A BIT CARRIED
+BSF TXD_HI,0 ;SET BIT 0 OF TX BUFFER TOP BYTE
+
+;=========================================================================
+
+;TX BUFFER IS BIN. (X X D D D D D D D D D D D D X X), H=HEADER, D=DATA
+; 2 2 2 2 2 2 2 2 1 1 1 1 X=DONT CARE
+; 7 6 5 4 3 2 1 0 9 8 7 6
+
+;=========================================================================
+;REPLACE THE MOST SIGNIFICANT 2 BITS WITH THE HEADER b01
+
+BCF TXD_HI,7
+BSF TXD_HI,6
+
+;=========================================================================
+;PUT THE 2 MISSED BITS INTO THE BOTTOM 2 BITS OF THE TX BUFFER LO BYTE
+
+BCF TXD_LO,0 ;CLEAR TXD_LO BIT 0
+
+BTFSC FB2,6 ;IF THE MISSING BIT IS 1
+BSF TXD_LO,0 ;SET TXD_LO BIT 0 TO 1
+
+
+BCF TXD_LO,1 ;CLEAR TXD_LO BIT 1
+
+BTFSC FB2,7 ;IF THE MISSING BIT IS 1
+BSF TXD_LO,1 ;SET TXD_LO BIT 1 TO 1
+
+;=========================================================================
+
+;TX BUFFER IS BIN. (H H D D D D D D D D D D D D D D), H=HEADER, D=DATA
+; = = 2 2 2 2 2 2 2 2 1 1 1 1 1 1 X=DONT CARE
+; 0 1 7 6 5 4 3 2 1 0 9 8 7 6 5 4
+
+;=========================================================================
+;SEND THE DATA AND EXIT SUBROUTINE
+
+CALL TX_WORD
+
+RETURN
+
+;*************************************************************************
+;*************************************************************************
+;SUBROUTINE TX_WORD
+
+;TRANSMITS A 16 BIT WORD CONTAINED IN TXD_LO & TXD_HI VIA SPI PROTOCOL
+;TO AD9833 FUNCTION GENERATOR IC
+
+TX_WORD: BSF PORTB,SPI_CK ;MAKE SURE CLOCK PIN STARTS HIGH
+
+BCF PORTA,DDS_CS ;PULL FSYNC , DATA FRAMING SIGNAL, LOW
+
+;=========================================================================
+;HIGH BYTE SEND..
+
+MOVLW $08 ;8 BITS IN A BYTE
+MOVWF GP1
+
+TR_HI: BTFSC TXD_HI,7 ;IF D7 IS SET
+BSF PORTB,SPI_DT ;SET THE SPI DATA LINE
+
+BTFSS TXD_HI,7 ;IF D7 IS CLEAR
+BCF PORTB,SPI_DT ;CLEAR THE SPI DATA LINE
+
+NOP ;PIN SETTLING TIME
+
+BCF PORTB,SPI_CK ;CLEAR THE SPI CLOCK LINE
+
+NOP ;PIN SETTLING TIME
+
+BSF PORTB,SPI_CK ;SET THE SPI CLOCK LINE
+
+RLF TXD_HI,F ;GET THE NEXT BIT
+
+DECFSZ GP1,F ;HAVE ALL 8 BITS BEEN SENT YET??
+GOTO TR_HI
+
+;=========================================================================
+;LOW BYTE SEND..
+
+MOVLW $08 ;8 BITS IN A BYTE
+MOVWF GP1
+
+TR_LO: BTFSC TXD_LO,7 ;IF D7 IS SET
+BSF PORTB,SPI_DT ;SET THE SPI DATA LINE
+
+BTFSS TXD_LO,7 ;IF D7 IS CLEAR
+BCF PORTB,SPI_DT ;CLEAR THE SPI DATA LINE
+
+NOP ;PIN SETTLING TIME
+
+BCF PORTB,SPI_CK ;CLEAR THE SPI CLOCK LINE
+
+NOP ;PIN SETTLING TIME
+
+BSF PORTB,SPI_CK ;SET THE SPI CLOCK LINE
+
+RLF TXD_LO,F ;GET THE NEXT BIT
+
+DECFSZ GP1,F ;HAVE ALL 8 BITS BEEN SENT YET??
+GOTO TR_HI
+
+;=========================================================================
+;END OF TRANSMISSION
+
+BSF PORTA,DDS_CS ;PULL FSYNC , DATA FRAMING SIGNAL, HIGH
+
+RETURN
+
+;*************************************************************************
+;*************************************************************************
+
+;*************************************************************************
+;*************************************************************************
+;SUBROUTINE TX_WIP
+
+;TRANSMITS A 17 BIT WIPER CODE VIA SPI PROTOCOL
+;TO EPOT IC
+
+TX_WIP: BCF PORTB,SPI_CK ;MAKE SURE CLOCK PIN STARTS HIGH
+
+BSF PORTA,POT_CS ;PULL FSYNC , DATA FRAMING SIGNAL, HIGH
+
+;=========================================================================
+;=========================================================================
+;WIPER # 1 USED..
+
+MOVLW $08 ;8 BITS IN A BYTE
+MOVWF GP1
+
+MOVF WIPER,W
+MOVWF GP2
+
+;=========================================================================
+;SEND 0 AS THE FIRST BIT, NON GANGED WIPER OPERATION
+
+BCF PORTB,SPI_DT ;CLEAR THE SPI DATA LINE
+
+NOP ;PIN SETTLING TIME
+
+BSF PORTB,SPI_CK ;SET THE SPI CLOCK LINE
+
+NOP ;PIN SETTLING TIME
+
+BCF PORTB,SPI_CK ;CLEAR THE SPI CLOCK LINE
+
+;=========================================================================
+
+;SEND THE 8 BIT WIPER CODE
+
+WP_1: BTFSC GP2,1 ;IF D1 IS SET
+BSF PORTB,SPI_DT ;SET THE SPI DATA LINE
+
+BTFSS GP2,1 ;IF D1 IS CLEAR
+BCF PORTB,SPI_DT ;CLEAR THE SPI DATA LINE
+
+NOP ;PIN SETTLING TIME
+
+BSF PORTB,SPI_CK ;SET THE SPI CLOCK LINE
+
+NOP ;PIN SETTLING TIME
+
+BCF PORTB,SPI_CK ;CLEAR THE SPI CLOCK LINE
+
+RRF TXD_HI,F ;GET THE NEXT BIT
+
+DECFSZ GP1,F ;HAVE ALL 8 BITS BEEN SENT YET??
+GOTO WP_1
+
+;=========================================================================
+;=========================================================================
+;WIPER # 2 NOT USED,TRANSMIT $00 TO IT
+
+MOVLW $08 ;8 BITS IN A BYTE
+MOVWF GP1
+
+BCF PORTB,SPI_DT ;CLEAR THE SPI DATA LINE
+NOP ;PIN SETTLING TIME
+
+WP_2: BSF PORTB,SPI_CK ;CLEAR THE SPI CLOCK LINE
+NOP ;PIN SETTLING TIME
+
+BCF PORTB,SPI_CK ;SET THE SPI CLOCK LINE
+
+DECFSZ GP1,F ;HAVE ALL 8 BITS BEEN SENT YET??
+GOTO WP_2
+
+;=========================================================================
+;END OF TRANSMISSION
+
+BCF PORTA,POT_CS ;PULL FSYNC , DATA FRAMING SIGNAL, LOW
+
+RETURN
+
+;*************************************************************************
+;*************************************************************************
+
+;*************************************************************************
+;*************************************************************************
+;SUBROUTINE ADJVAL
+
+;IS CALLED BY THE MENU TREE TO ADJUST, LIMIT, AND DISPLAY THE DECIMAL
+;FREQUENCY REGISTER POINTED TO
+;=========================================================================
+
+ADJVAL: MOVF C_POS,W ;SEND CURSOR TO PLACE POINTED AT BY C_POS
+MOVWF LCDBYT
+CALL LCDCOM
+
+CALL VLDLY ;A NICE LONG DELAY FOR EASY HUMAN INTERACTION
+
+;=========================================================================
+;ACT ON THE UP OR DOWN KEY PRESS
+
+BTFSS PORTB,UP ;IF THE DOWN KEY HAS BEEN PRESSED...
+DECF INDF,F ;DECREMENT THE DECIMAL VALUE
+
+BTFSS PORTB,DOWN ;IF THE UP KEY HAS BEEN PRESSED...
+INCF INDF,F ;INCREMENT THE DECIMAL VALUE
+
+;=========================================================================
+
+;IF THE NUMBER GOES BELOW ZERO, WRAP AROUND TO NINE
+
+MOVF INDF,W ;$FF IS JUST BELOW $00
+XORLW $FF
+
+BTFSC STATUS,Z
+INCF INDF,F ;INCREMENT THE DECIMAL VALUE
+
+;=========================================================================
+
+;IF THE NUMBER GOES ABOVE NINE, WRAP AROUND TO ZERO
+
+MOVF INDF,W ;$0A IS DECIMAL 10, JUST ABOVE $09
+XORLW $0A
+
+BTFSC STATUS,Z
+DECF INDF,F ;DECREMENT THE DECIMAL VALUE
+
+;=========================================================================
+
+;DISPLAY THE NUMBER
+
+MOVF INDF,W ;ADD $30 TO GET THE ASCII CODE
+ADDLW $30
+
+MOVWF LCDBYT ;LCD BUFFER
+
+CALL LCDDAT ;SEND AS A DATA BYTE
+
+;=========================================================================
+;DISPLAY TIDY, SO THE CURSOR POSITION DOESN'T JUMP AROUND...
+
+MOVF C_POS,W ;SEND CURSOR TO PLACE POINTED AT BY C_POS
+MOVWF LCDBYT
+CALL LCDCOM
+
+;=========================================================================
+;IF KEYS ARE RELEASED, THEN SEND THE ADJUSTED VALUE ELSE LOOP..
+
+;TEST TO SEE IF KEYS HAVE BEEN RELEASED
+
+MOVF PORTB,W ;READ PORT
+ANDLW $F0 ;MASK BITS NOT INTERESTED IN
+XORLW $F0 ;COMPARE
+
+BTFSS STATUS,Z ;IF NOT...
+RETURN ;THEN RETURN TO MAIN MENU TREE
+
+;=========================================================================
+;ELSE...
+
+CALL FDTOB ;CONVERT THE ADJUSTED FREQUENCY TO BINARY
+
+CALL OPFREQ ;SEND IT TO THE SIGNAL GENERATOR IC
+
+RETURN ;THEN RETURN TO MAIN MENU TREE
+
+;*************************************************************************
+;*************************************************************************
+;*************************************************************************
+;MAJOR BRANCH:- INTERUPT SERVICE ROUTINE
+;=========================================================================
+
+;THIS IS A DUMMY ROUTINE, THIS SOFTWARE DOESN'T REQUIRE INTERUPTS
+
+INTRPT: NOP
+
+RETFIE
+
+;*************************************************************************
+
+;*************************************************************************
+;*************************************************************************
+;*************************************************************************
+;ASSEMBLER DIRECTIVE EOF
+
+
+.END
